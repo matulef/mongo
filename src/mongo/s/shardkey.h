@@ -19,6 +19,7 @@
 #pragma once
 
 #include "../client/dbclient.h"
+#include "../db/hashindex.h"
 
 namespace mongo {
 
@@ -33,12 +34,14 @@ namespace mongo {
 
         /**
            global min is the lowest possible value for this key
-           e.g. { num : MinKey }
+           e.g. if the pattern is {a : 1, b : 1}
+           the min key is { a : MinKey, b : MinKey}
          */
         BSONObj globalMin() const { return gMin; }
 
         /**
-           global max is the highest possible value for this key
+           global max is the highest possible value for this key.
+           works analogously to globalMin
          */
         BSONObj globalMax() const { return gMax; }
 
@@ -79,7 +82,12 @@ namespace mongo {
 
         string toString() const;
 
-        BSONObj extractKey(const BSONObj& from) const;
+        BSONObj extractKey( const BSONObj& from ) const;
+        BSONObj extractHashObject( const BSONObj& from, HashSeed seed ) const;
+
+        bool isHashed() const {
+            return ( strcmp( pattern.firstElement().valuestrsafe() , "hashed" ) == 0 );
+        }
 
         bool partOfShardKey(const char* key ) const {
             return pattern.hasField(key);
@@ -112,6 +120,8 @@ namespace mongo {
         BSONObj k = from;
         bool needExtraction = false;
 
+        //If the "from" object is already in exactly the order of the pattern,
+        //then the "from" object is exactly what we want, so don't need extraction
         BSONObjIterator a(from);
         BSONObjIterator b(pattern);
         while (a.more() && b.more()){
@@ -126,6 +136,16 @@ namespace mongo {
 
         uassert(13334, "Shard Key must be less than 512 bytes", k.objsize() < 512);
         return k;
+    }
+
+    inline BSONObj ShardKeyPattern::extractHashObject(const BSONObj& from, HashSeed seed ) const {
+        assert( isHashed() );
+        string fieldname = pattern.firstElementFieldName();
+        BSONObj hashWithoutFieldName = HashedIndexType::makeSingleKey( from[fieldname] , seed );
+
+        BSONObjBuilder b;
+        b.appendAs( hashWithoutFieldName.firstElement() , fieldname );
+        return b.obj();
     }
 
 }

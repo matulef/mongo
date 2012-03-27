@@ -142,6 +142,8 @@ namespace mongo {
         // key pattern for chunks under this range
         BSONObj _key;
 
+        HashSeed _seed;
+
         // a map from a min key into the chunk's (or range's) max boundary
         typedef map< BSONObj, BSONObj , BSONObjCmp > RangeMap;
         RangeMap _chunksMap;

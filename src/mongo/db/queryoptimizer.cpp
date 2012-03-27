@@ -1106,23 +1106,23 @@ doneCheckOrder:
     }    
     
     bool indexWorks( const BSONObj &idxPattern, const BSONObj &sampleKey, int direction, int firstSignificantField ) {
-        BSONObjIterator p( idxPattern );
         BSONObjIterator k( sampleKey );
+        BSONObjIterator p( idxPattern );
         int i = 0;
-        while( 1 ) {
-            BSONElement pe = p.next();
+        while( k.more() ) {
             BSONElement ke = k.next();
-            if ( pe.eoo() && ke.eoo() )
-                return true;
-            if ( pe.eoo() || ke.eoo() )
+            BSONElement pe = p.next();
+            if ( pe.eoo() )
                 return false;
             if ( strcmp( pe.fieldName(), ke.fieldName() ) != 0 )
                 return false;
-            if ( ( i == firstSignificantField ) && !( ( direction > 0 ) == ( pe.number() > 0 ) ) )
-                return false;
+            if ( pe.isNumber() ) {
+                if ( ( i == firstSignificantField ) && !( ( direction > 0 ) == ( pe.number() > 0 ) ) )
+                    return false;
+            }
             ++i;
         }
-        return false;
+        return true;
     }
 
     BSONObj extremeKeyForIndex( const BSONObj &idxPattern, int baseDirection ) {

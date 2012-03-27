@@ -1216,7 +1216,7 @@ namespace mongo {
                         // points will be properly sorted using the set
                         for ( set<BSONObj>::iterator it = splitPts.begin() ; it != splitPts.end() ; ++it )
                             sortedSplitPts.push_back( *it );
-                        confOut->shardCollection( finalColLong, sortKey, true, &sortedSplitPts );
+                        confOut->shardCollection( finalColLong, sortKey, true, false, &sortedSplitPts );
                     }
 
                     map<BSONObj, int> chunkSizes;

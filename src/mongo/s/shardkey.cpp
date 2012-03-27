@@ -168,6 +168,10 @@ namespace mongo {
                 assert( k.isPrefixOf( BSON( "x" << 1 << "y" << 1 ) ) );
                 assert( k.isPrefixOf( BSON( "x" << 1 << "y" << 1 << "z" << 1 ) ) );
             }
+            {
+                ShardKeyPattern k( BSON( "a" << "hashed" ) );
+                assert( k.isPrefixOf( BSON( "a" << "hashed" << "b" << 1 ) ) );
+            }
         }
 
         void hasshardkeytest() {
@@ -196,6 +200,11 @@ namespace mongo {
                 assert( !k.hasShardKey( fromjson("{b:1}") ) );
             }
 
+            //hashed key
+            {
+                ShardKeyPattern k( fromjson("{a : 'hashed'}") );
+                assert( k.hasShardKey( fromjson("{a : 2343}") ) );
+            }
         }
 
         void extractkeytest() {
@@ -205,6 +214,15 @@ namespace mongo {
             assert( k.extractKey( fromjson("{a:1,sub:{b:2,c:3}}") ).binaryEqual(x) );
             assert( k.extractKey( fromjson("{sub:{b:2,c:3},a:1}") ).binaryEqual(x) );
         }
+
+        void extractkeyhashawaretest(){
+            ShardKeyPattern k( fromjson("{a : 'hashed'}") );
+            BSONObj x = fromjson("{a : 4, b : 5}");
+            assert(! k.extractHashObject(x,0).binaryEqual( BSON( "a" << x["b"].hash64(0) ) ) );
+            BSONObj out2( BSON( "a" << x["a"].hash64(0) ));
+            assert( k.extractHashObject(x,0).binaryEqual( BSON( "a" << x["a"].hash64(0) ) ) );
+        }
+
         void moveToFrontTest() {
             ShardKeyPattern sk (BSON("a" << 1 << "b" << 1));
 
@@ -244,6 +262,7 @@ namespace mongo {
         }
         void run() {
             extractkeytest();
+            extractkeyhashawaretest();
 
             ShardKeyPattern k( BSON( "key" << 1 ) );
 

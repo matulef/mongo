@@ -309,6 +309,11 @@ namespace mongo {
         Query& where(const string &jscode, BSONObj scope);
         Query& where(const string &jscode) { return where(jscode, BSONObj()); }
 
+        Query& returnKey(){
+            appendComplex("$returnKey", true);
+            return *this;
+        }
+
         /**
          * @return true if this query has an orderby, hint, or some other field
          */
@@ -731,6 +736,8 @@ namespace mongo {
            @param ns collection to be indexed
            @param keys the "key pattern" for the index.  e.g., { name : 1 }
            @param unique if true, indicates that key uniqueness should be enforced for this index
+           @param hashed if true, index is based on hash of the index field values
+           @param seed computes hashes using the given seed (only relevant if hash is true)
            @param name if not specified, it will be created from the keys automatically (which is recommended)
            @param cache if set to false, the index cache for the connection won't remember this call
            @param background build index in the background (see mongodb docs/wiki for details)
@@ -739,7 +746,7 @@ namespace mongo {
              should be true on first call, false on subsequent unless resetIndexCache was called
          */
         virtual bool ensureIndex( const string &ns , BSONObj keys , bool unique = false, const string &name = "",
-                                  bool cache = true, bool background = false, int v = -1 );
+                                  bool cache = true, bool background = false, int v = -1 , bool hashed = false , int seed = 0);
 
         /**
            clears the index cache, so the subsequent call to ensureIndex for any index will go to the server

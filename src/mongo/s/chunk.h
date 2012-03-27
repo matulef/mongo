@@ -298,7 +298,7 @@ namespace mongo {
     public:
         typedef map<Shard,ShardChunkVersion> ShardVersionMap;
 
-        ChunkManager( string ns , ShardKeyPattern pattern , bool unique );
+        ChunkManager( string ns , ShardKeyPattern pattern , bool unique , bool hashed = false , HashSeed seed = 0 );
 
         string getns() const { return _ns; }
 
@@ -306,11 +306,19 @@ namespace mongo {
         bool hasShardKey( const BSONObj& obj ) const;
 
         void createFirstChunks( const Shard& primary , vector<BSONObj>* initPoints , vector<Shard>* initShards ) const; // only call from DBConfig::shardCollection
+
+        /* findChunk assumes the key it's given is already in the right format
+         * (i.e. no hash extraction needed)
+         * findChunkHashAware will hash the key first if needed
+         */
         ChunkPtr findChunk( const BSONObj& obj ) const;
+        ChunkPtr findChunkHashAware( const BSONObj & obj ) const;
         ChunkPtr findChunkOnServer( const Shard& shard ) const;
 
         const ShardKeyPattern& getShardKey() const {  return _key; }
         bool isUnique() const { return _unique; }
+        bool isHashed() const { return _hashed; }
+        HashSeed getSeed() const { return _seed; }
 
         void getShardsForQuery( set<Shard>& shards , const BSONObj& query ) const;
         void getAllShards( set<Shard>& all ) const;
@@ -342,6 +350,9 @@ namespace mongo {
         void getInfo( BSONObjBuilder& b ) const {
             b.append( "key" , _key.key() );
             b.appendBool( "unique" , _unique );
+            b.appendBool( "hashed" , _hashed );
+            if ( _hashed )
+                b.appendNumber( "seed" , _seed );
         }
 
         /**
@@ -364,6 +375,8 @@ namespace mongo {
         const string _ns;
         const ShardKeyPattern _key;
         const bool _unique;
+        const bool _hashed;
+        const HashSeed _seed;
 
         const ChunkMap _chunkMap;
         const ChunkRangeManager _chunkRanges;

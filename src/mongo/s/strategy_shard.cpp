@@ -193,7 +193,7 @@ namespace mongo {
 
                 // Many operations benefit from having the shard key early in the object
                 o = manager->getShardKey().moveToFront(o);
-                insertsForChunks[manager->findChunk(o)].push_back(o);
+                insertsForChunks[manager->findChunkHashAware(o)].push_back(o);
             }
 
             inserts.clear();
@@ -391,7 +391,7 @@ namespace mongo {
                     }
                     else {
                         verify(16066, sk.hasShardKey(key));
-                        c = manager->findChunk( key );
+                        c = manager->findChunkHashAware( key );
                         shard = c->getShard();
                     }
 

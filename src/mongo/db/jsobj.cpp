@@ -306,6 +306,36 @@ namespace mongo {
         return def;
     }
 
+    void BSONElement::recursiveHash( Hasher* h , bool includeFieldName ) const {
+
+        if ( includeFieldName ){
+            h->addData( fieldName() , fieldNameSize() );
+        }
+
+        int ctype = canonicalType();
+        h->addData( &ctype , sizeof(ctype) );
+
+        if ( !isABSONObj() ){
+            //if there are no embedded objects (subobjects or arrays),
+            //compute the hash, squashing numeric types to doubles
+            if ( isNumber() ){
+                double i = numberDouble();
+                h->addData( &i , sizeof( i ) );
+            } else {
+                h->addData( value() , valuesize() );
+            }
+        } else {
+            //otherwise the subobject/array should be added into the
+            //hash, item by item (including field names)
+            const BSONObj& b = embeddedObject();
+            BSONObjIterator i(b);
+            while( i.more() ) {
+                BSONElement e = i.next();
+                e.recursiveHash( h , true );
+            }
+        }
+    }
+
     /* Matcher --------------------------------------*/
 
 // If the element is something like:

@@ -22,7 +22,7 @@
 #include "../client/dbclientmockcursor.h"
 #include "../db/instance.h"
 #include "../db/clientcursor.h"
-
+#include "shardkey.h"
 #include "d_chunk_manager.h"
 
 namespace mongo {
@@ -76,12 +76,19 @@ namespace mongo {
         BSONElement e = collectionDoc["key"];
         uassert( 13542 , str::stream() << "collection doesn't have a key: " << collectionDoc , ! e.eoo() && e.isABSONObj() );
 
+        //Question: why fill with 1's?
+        /*
         BSONObj keys = e.Obj().getOwned();
         BSONObjBuilder b;
         BSONForEach( key , keys ) {
             b.append( key.fieldName() , 1 );
         }
         _key = b.obj();
+        */
+        _key = e.Obj().getOwned();
+        if (collectionDoc.hasElement("seed")){
+            _seed = collectionDoc["seed"].numberInt();
+        }
     }
 
     void ShardChunkManager::_fillChunks( DBClientCursorInterface* cursor ) {
@@ -153,7 +160,15 @@ namespace mongo {
         return _belongsToMe( obj.extractFields( _key , true ) );
     }
 
-    bool ShardChunkManager::_belongsToMe( const BSONObj& x ) const {
+    bool ShardChunkManager::_belongsToMe( const BSONObj& in ) const {
+        ShardKeyPattern skey( _key );
+        BSONObj x;
+        if ( skey.isHashed() ) {
+            x = skey.extractHashObject( in, _seed );
+        } else {
+            x = skey.extractKey( in );
+        }
+
         RangeMap::const_iterator it = _rangesMap.upper_bound( x );
         if ( it != _rangesMap.begin() )
             it--;

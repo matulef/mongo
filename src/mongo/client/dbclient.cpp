@@ -883,13 +883,16 @@ namespace mongo {
                 ss << "_";
 
             ss << f.fieldName() << "_";
-            if( f.isNumber() )
+            if ( f.isNumber() ) {
                 ss << f.numberInt();
+            } else {
+                ss << f.str();  //this should match up with shell command
+            }
         }
         return ss.str();
     }
 
-    bool DBClientWithCommands::ensureIndex( const string &ns , BSONObj keys , bool unique, const string & name , bool cache, bool background, int version ) {
+    bool DBClientWithCommands::ensureIndex( const string &ns , BSONObj keys , bool unique, const string & name , bool cache, bool background, int version , bool hashed , int seed ) {
         BSONObjBuilder toSave;
         toSave.append( "ns" , ns );
         toSave.append( "key" , keys );
@@ -911,7 +914,12 @@ namespace mongo {
             toSave.append("v", version);
 
         if ( unique )
-            toSave.appendBool( "unique", unique );
+            toSave.appendBool( "unique" , true );
+
+        if ( hashed ) {
+            toSave.appendBool( "hashed" , true );
+            toSave.appendNumber( "seed" , seed );
+        }
 
         if( background ) 
             toSave.appendBool( "background", true );

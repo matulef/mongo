@@ -34,18 +34,9 @@
 #include "chunk.h" // for static genID only
 #include "config.h"
 #include "d_logic.h"
+#include "d_index.h"
 
 namespace mongo {
-
-    // TODO: Fold these checks into each command.
-    static IndexDetails *cmdIndexDetailsForRange( const char *ns, string &errmsg, BSONObj &min, BSONObj &max, BSONObj &keyPattern ) {
-        if ( ns[ 0 ] == '\0' || min.isEmpty() || max.isEmpty() ) {
-            errmsg = "invalid command syntax (note: min and max are required)";
-            return 0;
-        }
-        return indexDetailsForRange( ns, errmsg, min, max, keyPattern );
-    }
-
 
     class CmdMedianKey : public Command {
     public:
@@ -66,7 +57,7 @@ namespace mongo {
 
             Client::Context ctx( ns );
 
-            IndexDetails *id = cmdIndexDetailsForRange( ns, errmsg, min, max, keyPattern );
+            IndexDetails *id = indexDetailsForChunkRange( ns, errmsg, min, max, keyPattern );
             if ( id == 0 )
                 return false;
 
@@ -172,9 +163,9 @@ namespace mongo {
                 return false;
             }
 
-            IndexDetails *idx = cmdIndexDetailsForRange( ns , errmsg , min , max , keyPattern );
+            IndexDetails *idx = indexDetailsForChunkRange( ns , errmsg , min , max , keyPattern );
             if ( idx == NULL ) {
-                errmsg = "couldn't find index over splitting key";
+                errmsg = errmsg + " (couldn't find index over splitting key)";
                 return false;
             }
 
@@ -240,7 +231,7 @@ namespace mongo {
     public:
         SplitVector() : Command( "splitVector" , false ) {}
         virtual bool slaveOk() const { return false; }
-        virtual LockType locktype() const { return READ; }
+        virtual LockType locktype() const { return NONE; }
         virtual void help( stringstream &help ) const {
             help <<
                  "Internal command.\n"
@@ -298,16 +289,16 @@ namespace mongo {
 
             {
                 // Get the size estimate for this namespace
-                Client::Context ctx( ns );
+                Client::ReadContext ctx( ns );
                 NamespaceDetails *d = nsdetails( ns );
                 if ( ! d ) {
                     errmsg = "ns not found";
                     return false;
                 }
                 
-                IndexDetails *idx = cmdIndexDetailsForRange( ns , errmsg , min , max , keyPattern );
+                IndexDetails *idx = indexDetailsForChunkRange( ns , errmsg , min , max , keyPattern );
                 if ( idx == NULL ) {
-                    errmsg = "couldn't find index over splitting key";
+                    errmsg = errmsg + " (couldn't find index over splitting key)";
                     return false;
                 }
                 
@@ -334,7 +325,7 @@ namespace mongo {
                     }
                     else if ( maxSizeElem.isNumber() ) {
                         maxChunkSize = maxSizeElem.numberLong() * 1<<20;
-                        
+
                     }
                     else {
                         maxSizeElem = jsobj["maxChunkSizeBytes"];
@@ -814,7 +805,7 @@ namespace mongo {
                 DBDirectClient conn;
                 for (int i=1; i >= 0 ; i--){ // high chunk more likely to have only one obj
                     ChunkInfo chunk = newChunks[i];
-                    Query q = Query().minKey(chunk.min).maxKey(chunk.max);
+                    Query q = Query().minKey(chunk.min).maxKey(chunk.max).hint(keyPattern);
                     scoped_ptr<DBClientCursor> c (conn.query(ns, q, /*limit*/-2, 0, &fields));
                     if (c && c->itcount() == 1) {
                         result.append("shouldMigrate", BSON("min" << chunk.min << "max" << chunk.max));

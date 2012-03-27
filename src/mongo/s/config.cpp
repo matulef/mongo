@@ -56,16 +56,25 @@ namespace mongo {
         if ( in["key"].isABSONObj() ) {
             _key = in["key"].Obj().getOwned();
             _unqiue = in["unique"].trueValue();
-            shard( in["_id"].String() , _key , _unqiue );
+            _hashed = in["hashed"].trueValue();
+            ShardKeyPattern kp(_key);
+            shard( in["_id"].String() , kp , _unqiue , _hashed );
         }
         _dirty = false;
     }
     
 
-    void DBConfig::CollectionInfo::shard( const string& ns , const ShardKeyPattern& key , bool unique ) {
-        _cm.reset( new ChunkManager( ns , key , unique ) );
+    void DBConfig::CollectionInfo::shard( const string& ns , ShardKeyPattern& key , bool unique , bool hashed ) {
         _key = key.key().getOwned();
         _unqiue = unique;
+        _hashed = hashed;
+        if ( _hashed ) {
+            _seed = rand();
+        } else {
+            _seed = 0;
+        }
+
+        _cm.reset( new ChunkManager( ns , key , unique , hashed , _seed ) );
         _dirty = true;
         _dropped = false;
     }
@@ -144,7 +153,7 @@ namespace mongo {
     /**
      *
      */
-    ChunkManagerPtr DBConfig::shardCollection( const string& ns , ShardKeyPattern fieldsAndOrder , bool unique , vector<BSONObj>* initPoints, vector<Shard>* initShards ) {
+    ChunkManagerPtr DBConfig::shardCollection( const string& ns , ShardKeyPattern fieldsAndOrder , bool unique , bool hashed , vector<BSONObj>* initPoints, vector<Shard>* initShards ) {
         uassert( 8042 , "db doesn't have sharding enabled" , _shardingEnabled );
         uassert( 13648 , str::stream() << "can't shard collection because not all config servers are up" , configServer.allUp() );
 
@@ -157,7 +166,7 @@ namespace mongo {
 
             log() << "enable sharding on: " << ns << " with shard key: " << fieldsAndOrder << endl;
 
-            ci.shard( ns , fieldsAndOrder , unique );
+            ci.shard( ns , fieldsAndOrder , unique , hashed );
             ChunkManagerPtr cm = ci.getCM();
             uassert( 13449 , "collections already sharded" , (cm->numChunks() == 0) );
 
@@ -225,6 +234,8 @@ namespace mongo {
     ChunkManagerPtr DBConfig::getChunkManager( const string& ns , bool shouldReload, bool forceReload ) {
         BSONObj key;
         bool unique;
+        bool hashed;
+        int  seed;
         ShardChunkVersion oldVersion;
 
         {
@@ -246,6 +257,8 @@ namespace mongo {
 
             key = ci.key().copy();
             unique = ci.unique();
+            hashed = ci.hashed();
+            seed =   ci.seed();
             if ( ci.getCM() )
                 oldVersion = ci.getCM()->getVersion();
         }
@@ -297,7 +310,7 @@ namespace mongo {
                 
             }
             
-            temp.reset( new ChunkManager( ns , key , unique ) );
+            temp.reset( new ChunkManager( ns , key , unique , hashed , seed ) );
             if ( temp->numChunks() == 0 ) {
                 // maybe we're not sharded any more
                 reload(); // this is a full reload

@@ -26,6 +26,7 @@
 #include "ops/update.h"
 #include "ops/delete.h"
 #include "queryoptimizercursor.h"
+#include "../s/d_index.h"
 
 #include <fstream>
 
@@ -202,7 +203,7 @@ namespace mongo {
         return me.obj();
     }
 
-    long long Helpers::removeRange( const string& ns , const BSONObj& min , const BSONObj& max , bool yield , bool maxInclusive , RemoveCallback * callback, bool fromMigrate ) {
+    long long Helpers::removeRange( const string& ns , const BSONObj& min , const BSONObj& max , const BSONObj& keyPattern , bool yield , bool maxInclusive , RemoveCallback * callback, bool fromMigrate ) {
         BSONObj keya , keyb;
         BSONObj minClean = toKeyFormat( min , keya );
         BSONObj maxClean = toKeyFormat( max , keyb );
@@ -213,14 +214,15 @@ namespace mongo {
         if ( ! nsd )
             return 0;
 
-        int ii = nsd->findIndexByKeyPattern( keya );
-        assert( ii >= 0 );
-
         long long num = 0;
 
-        IndexDetails& i = nsd->idx( ii );
+        //needed since indexDetailsForChunkRange destroys these
+        BSONObj minCopy = min.copy();
+        BSONObj maxCopy = max.copy();
+        string errmsg = "";
+        IndexDetails *idx = indexDetailsForChunkRange( ns.c_str() , errmsg , minCopy , maxCopy , keyPattern );
 
-        shared_ptr<Cursor> c( BtreeCursor::make( nsd , ii , i , minClean , maxClean , maxInclusive, 1 ) );
+        shared_ptr<Cursor> c( BtreeCursor::make( nsd , nsd->idxNo(*idx) , *idx , minClean , maxClean , maxInclusive, 1 ) );
         auto_ptr<ClientCursor> cc( new ClientCursor( QueryOption_NoCursorTimeout , c , ns ) );
         cc->setDoingDeletes( true );
 

@@ -88,7 +88,13 @@ namespace mongo {
                 _cm.reset( cm );
             }
 
-            void shard( const string& ns , const ShardKeyPattern& key , bool unique );
+            /* This function is where various collection-level info is set
+             * Things that happen here:
+             *   1. CollectionInfo gets a copy of the shard key, bools for "unique" and "hashed"
+             *   2. If hash=true, a random seed is set.
+             *   3. A new ChunkManager is created.
+             */
+            void shard( const string& ns , ShardKeyPattern& key , bool unique , bool hashed );
             void unshard();
 
             bool isDirty() const { return _dirty; }
@@ -97,12 +103,16 @@ namespace mongo {
             void save( const string& ns , DBClientBase* conn );
             
             bool unique() const { return _unqiue; }
+            bool hashed() const { return _hashed; }
+            int  seed()   const { return _seed; }
             BSONObj key() const { return _key; } 
 
 
         private:
             BSONObj _key;
             bool _unqiue;
+            bool _hashed;
+            int _seed;
             ChunkManagerPtr _cm;
             bool _dirty;
             bool _dropped;
@@ -132,7 +142,7 @@ namespace mongo {
         }
 
         void enableSharding();
-        ChunkManagerPtr shardCollection( const string& ns , ShardKeyPattern fieldsAndOrder , bool unique , vector<BSONObj>* initPoints=0, vector<Shard>* initShards=0 );
+        ChunkManagerPtr shardCollection( const string& ns , ShardKeyPattern fieldsAndOrder , bool unique , bool hashed , vector<BSONObj>* initPoints=0, vector<Shard>* initShards=0 );
 
         /**
            @return true if there was sharding info to remove

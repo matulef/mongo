@@ -108,27 +108,26 @@ namespace mongo {
         return _manager->getShardKey().globalMax().woCompare( getMax() ) == 0;
     }
 
-    BSONObj Chunk::_getExtremeKey( int sort ) const {
+    BSONObj Chunk::_getExtremeKey( int direction ) const {
         ShardConnection conn( getShard().getConnString() , _manager->getns() );
         Query q;
-        if ( sort == 1 ) {
-            q.sort( _manager->getShardKey().key() );
+
+        //extract the sort object from the shard key
+        BSONObj k = _manager->getShardKey().key();
+        BSONObjBuilder r;
+        BSONObjIterator i(k);
+        while( i.more() ) {
+            BSONElement e = i.next();
+            double s = e.isNumber() ? e.Number() : 1; //deals with non-numeric indexes
+            r.append( e.fieldName() , direction * s );
         }
-        else {
-            // need to invert shard key pattern to sort backwards
-            // TODO: make a helper in ShardKeyPattern?
+        q.sort( r.obj() );
 
-            BSONObj k = _manager->getShardKey().key();
-            BSONObjBuilder r;
-
-            BSONObjIterator i(k);
-            while( i.more() ) {
-                BSONElement e = i.next();
-                uassert( 10163 ,  "can only handle numbers here - which i think is correct" , e.isNumber() );
-                r.append( e.fieldName() , -1 * e.number() );
-            }
-
-            q.sort( r.obj() );
+        //hashed keys need to explicitly hint the index, and use the
+        //keys stored in the index rather than the unhashed objects
+        if ( _manager->getShardKey().isHashed() ){
+            q.hint(k);
+            q.returnKey();
         }
 
         // find the extreme key
@@ -221,26 +220,29 @@ namespace mongo {
             // if forcing a split, use the chunk's median key
             BSONObj medianKey;
             pickMedianKey( medianKey );
-            if ( ! medianKey.isEmpty() )
+            if ( ! medianKey.isEmpty() ) {
                 splitPoint.push_back( medianKey );
+            }
         }
 
         // We assume that if the chunk being split is the first (or last) one on the collection, this chunk is
         // likely to see more insertions. Instead of splitting mid-chunk, we use the very first (or last) key
         // as a split point.
-        if ( minIsInf() ) {
-            splitPoint.clear();
-            BSONObj key = _getExtremeKey( 1 );
-            if ( ! key.isEmpty() ) {
-                splitPoint.push_back( key );
+        // This heuristic only works assuming the key is not hashed.
+        if ( ! _manager->getShardKey().isHashed() ) {
+            if ( minIsInf() ) {
+                splitPoint.clear();
+                BSONObj key = _getExtremeKey( 1 );
+                if ( ! key.isEmpty() ) {
+                    splitPoint.push_back( key );
+                }
             }
-
-        }
-        else if ( maxIsInf() ) {
-            splitPoint.clear();
-            BSONObj key = _getExtremeKey( -1 );
-            if ( ! key.isEmpty() ) {
-                splitPoint.push_back( key );
+            else if ( maxIsInf() ) {
+                splitPoint.clear();
+                BSONObj key = _getExtremeKey( -1 );
+                if ( ! key.isEmpty() ) {
+                    splitPoint.push_back( key );
+                }
             }
         }
 
@@ -315,7 +317,9 @@ namespace mongo {
                                                     "max" << _max <<
                                                     "maxChunkSizeBytes" << chunkSize <<
                                                     "shardId" << genID() <<
-                                                    "configdb" << configServer.modelServer()
+                                                    "configdb" << configServer.modelServer() <<
+                                                    "hashed" << _manager->isHashed() <<
+                                                    "keyPattern" << _manager->getShardKey().key()
                                                 ) ,
                                             res
                                           );
@@ -541,8 +545,8 @@ namespace mongo {
 
     AtomicUInt ChunkManager::NextSequenceNumber = 1;
 
-    ChunkManager::ChunkManager( string ns , ShardKeyPattern pattern , bool unique ) :
-        _ns( ns ) , _key( pattern ) , _unique( unique ) , _chunkRanges(), _mutex("ChunkManager"),
+    ChunkManager::ChunkManager( string ns , ShardKeyPattern pattern , bool unique , bool hashed , HashSeed seed ) :
+        _ns( ns ) , _key( pattern ) , _unique( unique ) , _hashed( hashed ) , _seed( seed ) , _chunkRanges(),  _mutex("ChunkManager") ,
         _nsLock( ConnectionString( configServer.modelServer() , ConnectionString::SYNC ) , ns ),
 
         // The shard versioning mechanism hinges on keeping track of the number of times we reloaded ChunkManager's.
@@ -742,14 +746,24 @@ namespace mongo {
         
         conn.done();
 
+        ScopedDbConnection shardConn( c.getShard().getConnString() );
         if ( numObjects == 0 ) {
             // the ensure index will have the (desired) indirect effect of creating the collection on the
             // assigned shard, as it sets up the index over the sharding keys.
-            ScopedDbConnection shardConn( c.getShard().getConnString() );
-            shardConn->ensureIndex( getns() , getShardKey().key() , _unique , "" , false ); // do not cache ensureIndex SERVER-1691 
-            shardConn.done();
+            // do not cache ensureIndex SERVER-1691
+            shardConn->ensureIndex( getns() , getShardKey().key() , _unique , "" , false , true , -1 , _hashed , _seed );
         }
 
+        shardConn.done();
+
+    }
+
+    ChunkPtr ChunkManager::findChunkHashAware( const BSONObj & obj ) const {
+        BSONObj o = obj;
+        if ( _key.isHashed() ) {
+            o = _key.extractHashObject( obj , _seed );
+        }
+        return findChunk(o);
     }
 
     ChunkPtr ChunkManager::findChunk( const BSONObj & obj ) const {
@@ -858,11 +872,23 @@ namespace mongo {
             uassert(13405, str::stream() << "min value " << min << " does not have shard key", hasShardKey(min));
             uassert(13406, str::stream() << "max value " << max << " does not have shard key", hasShardKey(max));
         }
+        BSONObj adjustedMin = min;
+        BSONObj adjustedMax = max;
+        if ( _key.isHashed() ) {
+            //if it's a range query and the key is hashed, just get all shards
+            if ( !min.equal( max ) ) {
+                getAllShards( shards );
+                return;
+            } else {
+                adjustedMin = _key.extractHashObject( min , _seed );
+                adjustedMax = _key.extractHashObject( max , _seed );
+            }
+        }
 
-        ChunkRangeMap::const_iterator it = _chunkRanges.upper_bound(min);
-        ChunkRangeMap::const_iterator end = _chunkRanges.upper_bound(max);
+        ChunkRangeMap::const_iterator it = _chunkRanges.upper_bound( adjustedMin );
+        ChunkRangeMap::const_iterator end = _chunkRanges.upper_bound( adjustedMax );
 
-        massert( 13507 , str::stream() << "no chunks found between bounds " << min << " and " << max , it != _chunkRanges.ranges().end() );
+        massert( 13507 , str::stream() << "no chunks found between bounds " << adjustedMin << " and " << adjustedMax , it != _chunkRanges.ranges().end() );
 
         if( end != _chunkRanges.ranges().end() ) ++end;
 
@@ -1074,6 +1100,8 @@ namespace mongo {
     /** This is for testing only, just setting up minimal basic defaults. */
     ChunkManager::ChunkManager() :
     _unique(),
+    _hashed(),
+    _seed(),
     _chunkRanges(),
     _mutex( "ChunkManager" ),
     _nsLock( ConnectionString(), "" ),

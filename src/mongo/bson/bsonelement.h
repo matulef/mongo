@@ -22,6 +22,7 @@
 #include "util/builder.h"
 #include "bsontypes.h"
 #include "oid.h"
+#include "../db/hasher.h"
 
 namespace mongo {
     class OpTime;
@@ -373,6 +374,29 @@ namespace mongo {
             return *reinterpret_cast< const mongo::OID* >( start );
         }
 
+        /* This computes a 64-bit hash of the *value* part of this BSONElement.
+         * Squashes elements (and any sub-elements) of the same canonical type,
+         * so hash({a:{b:4}}) will be the same as hash({a:{b:4.0}}).
+         * @param seed a seed passed to the hash function.
+         */
+        long long int hash64( HashSeed seed ) const {
+            scoped_ptr<Hasher> h(HasherFactory::createHasher( seed ));
+            recursiveHash( h.get() , false );
+            HashDigest d;
+            h->finish(d);
+            //HashDigest is actually 16 bytes, but we just get 8 via truncation
+            return *reinterpret_cast< long long int * >( d );
+        }
+
+        /*
+         *  very simple hash function for testing. has the property that
+         *  it's predictable, without just being the identity function
+         */
+        /*long long int hash64( HashSeed seed ) const {
+            long long int i = 10;
+            return numberLong() + i;
+        }*/
+
         /** this does not use fieldName in the comparison, just the value */
         bool operator<( const BSONElement& other ) const {
             int x = (int)canonicalType() - (int)other.canonicalType();
@@ -418,6 +442,13 @@ namespace mongo {
                 fieldNameSize_ = (int)strlen( fieldName() ) + 1;
             return fieldNameSize_;
         }
+
+        /* This incrementally computes the hash of this BSONElement,
+         * while recursively squashing any sub-elements of the
+         * same canonical type.  Used as a helper for hash64 below.
+         */
+        void recursiveHash( Hasher* h , bool includeFieldName ) const;
+
         mutable int totalSize; /* caches the computed size */
 
         friend class BSONObjIterator;

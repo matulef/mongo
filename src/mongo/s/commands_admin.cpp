@@ -440,6 +440,10 @@ namespace mongo {
                 // We enforce both these conditions in what comes next.
 
                 bool careAboutUnique = cmdObj["unique"].trueValue();
+                bool hashKey = cmdObj["hashed"].trueValue();
+                if ( hashKey ) {
+                    key = BSON( key.firstElementFieldName() << "hashed" );
+                }
 
                 {
                     ShardKeyPattern proposedKey( key );
@@ -545,7 +549,7 @@ namespace mongo {
 //                        pts.push_back( elmts[i].Obj() );
 //                    }
 //                }
-                config->shardCollection( ns , key , careAboutUnique );
+                config->shardCollection( ns , key , careAboutUnique , hashKey );
 
                 result << "collectionsharded" << ns;
                 return true;
@@ -584,6 +588,45 @@ namespace mongo {
             }
         } getShardVersionCmd;
 
+        /*
+         * This command is solely for testing.
+         */
+        class FindChunkCmd : public GridAdminCmd {
+        public:
+            FindChunkCmd() : GridAdminCmd( "findchunk" ) {}
+            virtual void help ( stringstream& help ) const {
+                help
+                << " example - find the chunk that contains the given key \n"
+                << " {findchunk : 'test.foo' , find : {a : 2} }\n"
+                ;
+            }
+
+            bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
+
+                string ns = cmdObj.firstElement().valuestrsafe();
+                if ( ns.size() == 0 ) {
+                    errmsg = "no ns";
+                    return false;
+                }
+
+                DBConfigPtr config = grid.getDBConfig( ns );
+                if ( ! config->isSharded( ns ) ) {
+                    config->reload();
+                    if ( ! config->isSharded( ns ) ) {
+                        errmsg = "ns not sharded.";
+                        return false;
+                    }
+                }
+                ChunkManagerPtr cm = config->getChunkManager( ns );
+
+                BSONObj find = cmdObj.getObjectField( "find" );
+                ChunkPtr chunk = cm->findChunkHashAware( find );
+                result.append("chunkinfo" , chunk->toString());
+                return true;
+            }
+
+        } findChunkCmd;
+
         class SplitCollectionCmd : public GridAdminCmd {
         public:
             SplitCollectionCmd() : GridAdminCmd( "split" ) {}
@@ -618,19 +661,24 @@ namespace mongo {
                         return false;
                     }
                 }
+                ChunkManagerPtr cm = config->getChunkManager( ns );
 
                 BSONObj find = cmdObj.getObjectField( "find" );
-                if ( find.isEmpty() ) {
-                    find = cmdObj.getObjectField( "middle" );
-
-                    if ( find.isEmpty() ) {
-                        errmsg = "need to specify find or middle";
-                        return false;
+                if (! find.isEmpty() ) {
+                    //if what we're actually looking for is based on hashes
+                    if ( cm->getShardKey().isHashed() ) {
+                        find = cm->getShardKey().extractHashObject( find , cm->getSeed() );
                     }
+                } else {
+                    find = cmdObj.getObjectField( "middle" );
                 }
 
-                ChunkManagerPtr info = config->getChunkManager( ns );
-                ChunkPtr chunk = info->findChunk( find );
+                if ( find.isEmpty() ) {
+                    errmsg = "need to specify find or middle";
+                    return false;
+                }
+
+                ChunkPtr chunk = cm->findChunk( find );
                 BSONObj middle = cmdObj.getObjectField( "middle" );
 
                 assert( chunk.get() );
@@ -649,7 +697,7 @@ namespace mongo {
                         return false;
                     }
 
-                    if (!fieldsMatch(middle, info->getShardKey().key())){
+                    if (!fieldsMatch(middle, cm->getShardKey().key())){
                         errmsg = "middle has different fields (or different order) than shard key";
                         return false;
                     }
@@ -721,7 +769,7 @@ namespace mongo {
                 tlog() << "CMD: movechunk: " << cmdObj << endl;
 
                 ChunkManagerPtr info = config->getChunkManager( ns );
-                ChunkPtr c = info->findChunk( find );
+                ChunkPtr c = info->findChunkHashAware( find );
                 const Shard& from = c->getShard();
 
                 if ( from == to ) {
