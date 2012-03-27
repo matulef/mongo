@@ -1,3 +1,4 @@
+if ( !_isWindows() ) { //SERVER-5024
 var name = "rs_auth2";
 var port = allocatePorts(3);
 var path = "jstests/libs/";
@@ -38,8 +39,13 @@ var checkNoAuth = function() {
 var checkInvalidAuthStates = function() {
     print("check that 0 is in recovering");
     assert.soon(function() {
-        var result = m.getDB("admin").runCommand({isMaster: 1});
-        return !result.ismaster && !result.secondary;
+        try {
+            var result = m.getDB("admin").runCommand({isMaster: 1});
+            return !result.ismaster && !result.secondary;
+        }
+        catch ( e ) {
+            print( e );
+        }
     });
 
     print("shut down 1, 0 still in recovering.");
@@ -96,3 +102,4 @@ rs.stop(0);
 m = rs.restart(0, {"keyFile" : path+"key1"});
 
 print("0 becomes a secondary");
+} // !_isWindows()

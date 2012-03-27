@@ -12,8 +12,16 @@ ops = [
 
 seconds = .7
 
-res = benchRun( { ops : ops , parallel : 2 , seconds : seconds , host : db.getMongo().host } )
-assert.lte( seconds * res.update , t.findOne( { _id : 1 } ).x , "A1" )
+benchArgs =  { ops : ops , parallel : 2 , seconds : seconds , host : db.getMongo().host };
+
+if (jsTest.options().auth) {
+    benchArgs['db'] = 'admin';
+    benchArgs['username'] = jsTest.options().adminUser;
+    benchArgs['password'] = jsTest.options().adminPassword;
+}
+res = benchRun( benchArgs );
+
+assert.lte( seconds * res.update , t.findOne( { _id : 1 } ).x * 1.05 , "A1" )
 
 
 assert.eq( 1 , t.getIndexes().length , "B1" )
